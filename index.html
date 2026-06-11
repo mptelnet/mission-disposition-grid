@@ -212,6 +212,28 @@
       color: #c4c4c4;
       pointer-events: none;
     }
+    #army-sheet .disposition-cell select {
+      width: 100%;
+      min-width: 0;
+      font: inherit;
+      font-size: 0.82rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 6px;
+      background: white;
+      cursor: pointer;
+    }
+    #army-sheet .disposition-cell select:disabled {
+      background: transparent;
+      border-color: transparent;
+      padding-left: 0;
+      cursor: default;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    #army-sheet .disposition-cell select:disabled::-ms-expand {
+      display: none;
+    }
     .score-5 { background: #1b7a3d; color: #fff; }
     .score-4 { background: #b7e4c7; color: #1b4332; }
     .score-35 { background: #d8f3dc; color: #1b4332; }
@@ -814,10 +836,55 @@
       td.className = base + scoreClass(td.textContent);
     }
 
+    function normalizeDisposition(value) {
+      const text = (value || "").trim().toUpperCase();
+      return DISPOSITIONS.find(d => d.toUpperCase() === text) || "";
+    }
+
+    function createDispositionSelect(value = "") {
+      const select = document.createElement("select");
+      select.className = "disposition-select";
+
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "—";
+      select.appendChild(empty);
+
+      DISPOSITIONS.forEach(disposition => {
+        const option = document.createElement("option");
+        option.value = disposition;
+        option.textContent = disposition;
+        select.appendChild(option);
+      });
+
+      select.value = normalizeDisposition(value);
+      return select;
+    }
+
+    function getCellDisposition(td) {
+      const select = td.querySelector("select.disposition-select");
+      return select ? select.value : (td.textContent || "").trim();
+    }
+
+    function setCellDisposition(td, value) {
+      const select = td.querySelector("select.disposition-select");
+      const normalized = normalizeDisposition(value);
+      if (select) {
+        select.value = normalized;
+      } else {
+        td.textContent = normalized || value || "";
+      }
+    }
+
+    function isDispositionReadOnly(td) {
+      const select = td.querySelector("select.disposition-select");
+      return select ? select.disabled : td.contentEditable === "false";
+    }
+
     function updateDispositionCell(td) {
-      const dispClass = dispositionClass(td.textContent);
-      const readOnly = td.contentEditable === "false";
-      const base = readOnly ? "readonly-col label-col" : "editable label-col";
+      const dispClass = dispositionClass(getCellDisposition(td));
+      const readOnly = isDispositionReadOnly(td);
+      const base = readOnly ? "readonly-col label-col disposition-cell" : "editable label-col disposition-cell";
       td.className = base + (dispClass ? " " + dispClass : "");
     }
 
@@ -865,9 +932,20 @@
 
     function attachRowEditHandlers(tr) {
       [...tr.cells].forEach((td, i) => {
+        const select = td.querySelector("select.disposition-select");
+        if (select) {
+          select.addEventListener("change", () => {
+            updateDispositionCell(td);
+            if (!select.disabled) {
+              markSheetDirty();
+              scheduleAutoSave();
+            }
+          });
+          return;
+        }
+
         const onEdit = () => {
-          if (i === 4) updateDispositionCell(td);
-          else if (i >= 5) updateScoreCell(td);
+          if (i >= 5) updateScoreCell(td);
           if (td.contentEditable === "true") {
             markSheetDirty();
             scheduleAutoSave();
@@ -886,11 +964,16 @@
       tr.classList.toggle("owned-row", owned);
 
       [...tr.cells].forEach((td, i) => {
+        const dispositionSelect = td.querySelector("select.disposition-select");
+
         if (owned) {
           if (i === 0) {
             td.contentEditable = "false";
             td.textContent = name;
             td.className = "readonly-col label-col";
+          } else if (i === 4 && dispositionSelect) {
+            dispositionSelect.disabled = false;
+            updateDispositionCell(td);
           } else if (i < 5) {
             td.contentEditable = "true";
             td.className = "editable label-col";
@@ -898,12 +981,15 @@
             td.contentEditable = "true";
             updateScoreCell(td);
           }
-          if (i === 4) updateDispositionCell(td);
         } else {
-          td.contentEditable = "false";
-          if (i < 5) td.className = "readonly-col label-col";
-          else updateScoreCell(td);
-          if (i === 4) updateDispositionCell(td);
+          if (i === 4 && dispositionSelect) {
+            dispositionSelect.disabled = true;
+            updateDispositionCell(td);
+          } else {
+            td.contentEditable = "false";
+            if (i < 5) td.className = "readonly-col label-col";
+            else updateScoreCell(td);
+          }
         }
       });
     }
@@ -926,10 +1012,15 @@
 
       textCols.forEach(col => {
         const td = document.createElement("td");
-        td.className = "editable label-col";
-        td.contentEditable = "true";
-        td.spellcheck = false;
-        td.dataset.placeholder = col.placeholder;
+        if (col.placeholder === "Disposition") {
+          td.className = "editable label-col disposition-cell";
+          td.appendChild(createDispositionSelect());
+        } else {
+          td.className = "editable label-col";
+          td.contentEditable = "true";
+          td.spellcheck = false;
+          td.dataset.placeholder = col.placeholder;
+        }
         tr.appendChild(td);
       });
 
@@ -952,8 +1043,12 @@
 
     function fillEditableRow(tr, data = {}) {
       ARMY_FIELDS.forEach((key, i) => {
-        tr.cells[i].textContent = data[key] || "";
-        if (key === "disposition") updateDispositionCell(tr.cells[i]);
+        if (key === "disposition") {
+          setCellDisposition(tr.cells[i], data[key] || "");
+          updateDispositionCell(tr.cells[i]);
+        } else {
+          tr.cells[i].textContent = data[key] || "";
+        }
       });
       SCORE_FIELDS.forEach((key, i) => {
         const td = tr.cells[5 + i];
@@ -966,7 +1061,9 @@
       return [...document.querySelectorAll("#army-sheet tbody tr.editable-row")].map(tr => {
         const row = {};
         ARMY_FIELDS.forEach((key, i) => {
-          row[key] = (tr.cells[i].innerText || "").trim();
+          row[key] = key === "disposition"
+            ? getCellDisposition(tr.cells[i])
+            : (tr.cells[i].innerText || "").trim();
         });
         SCORE_FIELDS.forEach((key, i) => {
           row[key] = (tr.cells[5 + i].innerText || "").trim();
