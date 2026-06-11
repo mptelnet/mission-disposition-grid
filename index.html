@@ -43,6 +43,17 @@
       margin: 0 0 16px;
       color: #52525b;
       font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .subtitle kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      font-family: inherit;
+      font-size: 0.82rem;
+      border: 1px solid #d4d4d8;
+      border-radius: 4px;
+      background: #fff;
+      box-shadow: 0 1px 0 #e4e4e7;
     }
     .left-column {
       display: flex;
@@ -176,6 +187,14 @@
       background: #eff6ff;
       box-shadow: inset 0 0 0 3px #3b82f6;
     }
+    .cell.focused {
+      background: #f5f3ff;
+      box-shadow: inset 0 0 0 2px #6366f1;
+    }
+    .cell.locked.focused {
+      background: #eff6ff;
+      box-shadow: inset 0 0 0 3px #3b82f6;
+    }
     .cell.empty {
       cursor: default;
       color: #a1a1aa;
@@ -280,7 +299,7 @@
 <body>
   <div class="page">
     <h1>Primary Mission Disposition Grid</h1>
-    <p class="subtitle">Click a cell to lock the preview. Hover to peek; it reverts to the locked cell when you move away. Columns = your disposition, rows = opponent disposition.</p>
+    <p class="subtitle">Use <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> to move between cells and browse missions in the preview. Press <kbd>Enter</kbd> or <kbd>Space</kbd> to lock a cell; <kbd>Esc</kbd> clears the lock. Click or hover also works — hover peeks temporarily and reverts to the locked cell when you move away. Columns = your disposition, rows = opponent disposition.</p>
     <div class="left-column">
       <div class="grid-wrap">
         <table id="grid-table">
@@ -357,7 +376,7 @@
       </div>
     </div>
     <aside class="preview" id="preview">
-      <div class="preview-placeholder">Click a grid cell to lock the preview</div>
+      <div class="preview-placeholder">Use arrow keys or click a grid cell to browse missions. Press Enter or Space to lock the preview.</div>
     </aside>
   </div>
   <script>
@@ -438,6 +457,20 @@
       return section;
     }
 
+    const cellGrid = Array.from({ length: DISPOSITIONS.length }, () => Array(DISPOSITIONS.length).fill(null));
+
+    function indexFromCell(td) {
+      if (!td || !td.dataset.yours) return null;
+      return {
+        row: DISPOSITIONS.indexOf(td.dataset.opponent),
+        col: DISPOSITIONS.indexOf(td.dataset.yours)
+      };
+    }
+
+    function isTypingTarget(el) {
+      return el && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.tagName === "BUTTON");
+    }
+
     function renderGrid() {
       const table = document.getElementById("grid-table");
       const headerRow = table.querySelector("thead tr");
@@ -449,24 +482,26 @@
       });
 
       const tbody = table.querySelector("tbody");
-      DISPOSITIONS.forEach(opponent => {
+      DISPOSITIONS.forEach((opponent, rowIdx) => {
         const tr = document.createElement("tr");
         const rowTh = document.createElement("th");
         rowTh.className = "row-header " + CLASS_MAP[opponent];
         rowTh.textContent = opponent;
         tr.appendChild(rowTh);
 
-        DISPOSITIONS.forEach(yours => {
+        DISPOSITIONS.forEach((yours, colIdx) => {
           const td = document.createElement("td");
           const list = getMissions(opponent, yours);
 
           if (list.length === 0) {
             td.className = "cell empty";
             td.textContent = "—";
+            cellGrid[rowIdx][colIdx] = null;
           } else {
             td.className = "cell";
             td.dataset.yours = yours;
             td.dataset.opponent = opponent;
+            cellGrid[rowIdx][colIdx] = td;
             const label = document.createElement("div");
             label.className = "cell-label " + CLASS_MAP[opponent];
             label.textContent = opponent;
@@ -478,12 +513,7 @@
             td.addEventListener("click", () => lockCell(yours, opponent, list, td));
             td.addEventListener("mouseenter", () => peekCell(yours, opponent, list, td));
             td.addEventListener("mouseleave", () => unpeekCell(td));
-            td.addEventListener("keydown", (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                lockCell(yours, opponent, list, td);
-              }
-            });
+            td.addEventListener("focus", () => focusNavCell(rowIdx, colIdx, td !== lockedCell));
             td.tabIndex = 0;
           }
           tr.appendChild(td);
@@ -494,10 +524,12 @@
 
     let lockedCell = null;
     let hoverCell = null;
+    let focusedCell = null;
+    let navPos = null;
 
     function showPlaceholder() {
       const preview = document.getElementById("preview");
-      preview.innerHTML = '<div class="preview-placeholder">Click a grid cell to lock the preview</div>';
+      preview.innerHTML = '<div class="preview-placeholder">Use arrow keys or click a grid cell to browse missions. Press Enter or Space to lock the preview.</div>';
     }
 
     function renderPreview(yours, opponent, missions) {
@@ -522,10 +554,93 @@
       }
     }
 
+    function clearFocused() {
+      if (focusedCell) {
+        focusedCell.classList.remove("focused");
+        focusedCell = null;
+      }
+    }
+
+    function restorePreview() {
+      if (lockedCell) {
+        renderPreview(
+          lockedCell.dataset.yours,
+          lockedCell.dataset.opponent,
+          getMissions(lockedCell.dataset.opponent, lockedCell.dataset.yours)
+        );
+      } else if (focusedCell) {
+        renderPreview(
+          focusedCell.dataset.yours,
+          focusedCell.dataset.opponent,
+          getMissions(focusedCell.dataset.opponent, focusedCell.dataset.yours)
+        );
+      } else {
+        showPlaceholder();
+      }
+    }
+
+    function focusNavCell(row, col, updatePreview = true) {
+      const td = cellGrid[row] && cellGrid[row][col];
+      if (!td) return false;
+
+      clearFocused();
+      navPos = { row, col };
+      focusedCell = td;
+      td.classList.add("focused");
+      td.focus({ preventScroll: true });
+
+      if (updatePreview && td !== lockedCell) {
+        if (hoverCell && hoverCell !== lockedCell) hoverCell.classList.remove("hover");
+        renderPreview(
+          td.dataset.yours,
+          td.dataset.opponent,
+          getMissions(td.dataset.opponent, td.dataset.yours)
+        );
+      }
+      return true;
+    }
+
+    function firstNavigableCell() {
+      for (let row = 0; row < DISPOSITIONS.length; row++) {
+        for (let col = 0; col < DISPOSITIONS.length; col++) {
+          if (cellGrid[row][col]) return { row, col };
+        }
+      }
+      return null;
+    }
+
+    function moveNav(dr, dc) {
+      if (!navPos) {
+        const first = firstNavigableCell();
+        if (first) focusNavCell(first.row, first.col);
+        return;
+      }
+
+      let row = navPos.row + dr;
+      let col = navPos.col + dc;
+      while (row >= 0 && row < DISPOSITIONS.length && col >= 0 && col < DISPOSITIONS.length) {
+        if (cellGrid[row][col]) {
+          focusNavCell(row, col);
+          return;
+        }
+        row += dr;
+        col += dc;
+      }
+    }
+
+    function unlockCell() {
+      if (!lockedCell) return;
+      lockedCell.classList.remove("locked");
+      lockedCell = null;
+      restorePreview();
+    }
+
     function lockCell(yours, opponent, missions, td) {
       if (lockedCell) lockedCell.classList.remove("locked");
       lockedCell = td;
       td.classList.add("locked");
+      const pos = indexFromCell(td);
+      if (pos) focusNavCell(pos.row, pos.col, false);
       renderPreview(yours, opponent, missions);
     }
 
@@ -541,12 +656,41 @@
         td.classList.remove("hover");
         hoverCell = null;
       }
-      if (lockedCell) {
-        renderPreview(lockedCell.dataset.yours, lockedCell.dataset.opponent,
-          getMissions(lockedCell.dataset.opponent, lockedCell.dataset.yours));
-      } else {
-        showPlaceholder();
-      }
+      restorePreview();
+    }
+
+    function initGridKeyboard() {
+      document.addEventListener("keydown", (e) => {
+        if (isTypingTarget(document.activeElement)) return;
+
+        const moves = {
+          ArrowUp: [-1, 0],
+          ArrowDown: [1, 0],
+          ArrowLeft: [0, -1],
+          ArrowRight: [0, 1]
+        };
+
+        if (moves[e.key]) {
+          e.preventDefault();
+          moveNav(...moves[e.key]);
+          return;
+        }
+
+        if ((e.key === "Enter" || e.key === " ") && focusedCell) {
+          e.preventDefault();
+          lockCell(
+            focusedCell.dataset.yours,
+            focusedCell.dataset.opponent,
+            getMissions(focusedCell.dataset.opponent, focusedCell.dataset.yours),
+            focusedCell
+          );
+          return;
+        }
+
+        if (e.key === "Escape") {
+          unlockCell();
+        }
+      });
     }
 
     function scoreClass(value) {
@@ -646,6 +790,7 @@
     }
 
     renderGrid();
+    initGridKeyboard();
     initArmySheet();
   </script>
 </body>
