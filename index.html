@@ -85,6 +85,7 @@
       margin-bottom: 8px;
     }
     .sheet-sync-url-field { display: none; }
+    .sheet-sync-url-field.admin-visible { display: block; }
     #army-sheet .actions-col {
       width: 36px;
       min-width: 36px;
@@ -209,14 +210,20 @@
     .player-name-field {
       margin-bottom: 12px;
     }
-    .player-name-field label {
+    .player-name-field > label {
       display: block;
       font-size: 0.82rem;
       color: #52525b;
       margin-bottom: 4px;
     }
-    .player-name-field input {
-      width: 100%;
+    .player-name-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .player-name-row input[type="text"] {
+      flex: 1 1 200px;
       max-width: 320px;
       padding: 6px 8px;
       font: inherit;
@@ -441,10 +448,16 @@
 
       <div class="army-sheet-wrap">
         <h2>Army List Tracker</h2>
-        <p class="sheet-hint">Enter your name to edit your rows only. Changes auto-save to the shared Google Sheet; the page auto-refreshes every 30s. Grey example rows are read-only and are not synced.</p>
+        <p class="sheet-hint">Enter your name to edit your rows only. Changes auto-save to the shared Google Sheet; the page auto-refreshes every 15s. Grey example rows are read-only and are not synced.</p>
         <div class="player-name-field">
           <label for="player-name">Your name</label>
-          <input type="text" id="player-name" placeholder="Must match the Player column" autocomplete="name">
+          <div class="player-name-row">
+            <input type="text" id="player-name" placeholder="Must match the Player column" autocomplete="name">
+            <label class="sheet-sync-auto">
+              <input type="checkbox" id="show-my-rows-only">
+              Show only my rows
+            </label>
+          </div>
         </div>
         <div class="sheet-sync">
           <label for="sheet-script-url" class="sheet-sync-url-field">
@@ -456,7 +469,7 @@
             <button type="button" id="save-to-sheet">Save to Sheet</button>
             <label class="sheet-sync-auto">
               <input type="checkbox" id="auto-refresh-sheet">
-              Auto-refresh every 30s
+              Auto-refresh every 15s
             </label>
           </div>
           <p class="sheet-sync-status" id="sheet-sync-status">Connecting to shared Google Sheet…</p>
@@ -479,7 +492,7 @@
           </thead>
           <tbody id="army-sheet-body">
             <tr class="example-row">
-              <td class="label-col">MP</td>
+              <td class="label-col">Matt P</td>
               <td class="label-col">Orks</td>
               <td class="label-col">War Horde</td>
               <td class="label-col"></td>
@@ -492,7 +505,7 @@
               <td class="actions-col"></td>
             </tr>
             <tr class="example-row">
-              <td class="label-col">MP</td>
+              <td class="label-col">Matt P</td>
               <td class="label-col">Votann</td>
               <td class="label-col">Delve Assault Shift</td>
               <td class="label-col">Sagitaur shit</td>
@@ -505,7 +518,7 @@
               <td class="actions-col"></td>
             </tr>
             <tr class="example-row">
-              <td class="label-col">MP</td>
+              <td class="label-col">Matt P</td>
               <td class="label-col">Votann</td>
               <td class="label-col">Delve Assault Shift</td>
               <td class="label-col">Sagitaur shit</td>
@@ -521,10 +534,6 @@
         </table>
         <div class="sheet-actions">
           <button type="button" id="add-army-row">+ Add row</button>
-          <label class="sheet-sync-auto">
-            <input type="checkbox" id="show-my-rows-only">
-            Show only my rows
-          </label>
         </div>
       </div>
     </div>
@@ -941,7 +950,8 @@
     const SHEET_AUTO_KEY = "armySheetAutoRefresh";
     const PLAYER_NAME_KEY = "armySheetPlayerName";
     const SHOW_MY_ROWS_KEY = "armySheetShowMyRowsOnly";
-    const SHEET_REFRESH_MS = 30000;
+    const ADMIN_NAME = "mp";
+    const SHEET_REFRESH_MS = 15000;
     const AUTO_SAVE_MS = 2000;
 
     let sheetRefreshTimer = null;
@@ -961,14 +971,27 @@
       return (tr.cells[0].innerText || "").trim();
     }
 
+    function isAdmin() {
+      return normalizeName(getPlayerName()) === ADMIN_NAME;
+    }
+
     function isRowOwned(tr) {
       const name = getPlayerName();
       if (!name) return false;
       return normalizeName(rowPlayerName(tr)) === normalizeName(name);
     }
 
+    function canManageRow(tr) {
+      if (!getPlayerName() || !tr.classList.contains("editable-row")) return false;
+      return isRowOwned(tr) || isAdmin();
+    }
+
     function isShowMyRowsOnlyEnabled() {
       return document.getElementById("show-my-rows-only").checked;
+    }
+
+    function updateAdminUi() {
+      document.querySelector(".sheet-sync-url-field").classList.toggle("admin-visible", isAdmin());
     }
 
     function updateShowMyRowsControl() {
@@ -1008,7 +1031,7 @@
     }
 
     function deleteEditableRow(tr) {
-      if (!tr.classList.contains("owned-row")) return;
+      if (!canManageRow(tr)) return;
       tr.remove();
       markSheetDirty();
       scheduleAutoSave();
@@ -1044,24 +1067,30 @@
     function applyRowOwnership(tr) {
       const name = getPlayerName();
       const owned = !!name && isRowOwned(tr);
+      const manageable = canManageRow(tr);
 
-      tr.classList.toggle("readonly-row", !owned);
-      tr.classList.toggle("owned-row", owned);
+      tr.classList.toggle("readonly-row", !manageable);
+      tr.classList.toggle("owned-row", manageable);
 
       [...tr.cells].forEach((td, i) => {
         const deleteBtn = td.querySelector(".row-delete-btn");
         if (deleteBtn) {
-          deleteBtn.disabled = !owned;
+          deleteBtn.disabled = !manageable;
           return;
         }
 
         const dispositionSelect = td.querySelector("select.disposition-select");
 
-        if (owned) {
+        if (manageable) {
           if (i === 0) {
-            td.contentEditable = "false";
-            td.textContent = name;
-            td.className = "readonly-col label-col";
+            if (owned) {
+              td.contentEditable = "false";
+              td.textContent = name;
+              td.className = "readonly-col label-col";
+            } else {
+              td.contentEditable = "true";
+              td.className = "editable label-col";
+            }
           } else if (i === 4 && dispositionSelect) {
             dispositionSelect.disabled = false;
             updateDispositionCell(td);
@@ -1236,6 +1265,7 @@
     function onPlayerNameChange() {
       const name = getPlayerName();
       if (name) localStorage.setItem(PLAYER_NAME_KEY, name);
+      updateAdminUi();
       applyAllRowOwnership();
       if (!name) setSheetStatus("Enter your name to edit rows.", "err");
     }
@@ -1346,6 +1376,7 @@
 
       loadSheetConfig();
       loadPlayerName();
+      updateAdminUi();
       loadShowMyRowsFilter();
 
       document.getElementById("sheet-script-url").addEventListener("change", saveSheetConfig);
