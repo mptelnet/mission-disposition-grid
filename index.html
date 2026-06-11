@@ -170,6 +170,33 @@
     #army-sheet .example-row td.score-col {
       opacity: 0.82;
     }
+    #army-sheet tr.readonly-row td {
+      background: #f4f4f5;
+      color: #52525b;
+      cursor: default;
+      user-select: text;
+    }
+    #army-sheet tr.readonly-row td.score-col {
+      opacity: 0.9;
+    }
+    .player-name-field {
+      margin-bottom: 12px;
+    }
+    .player-name-field label {
+      display: block;
+      font-size: 0.82rem;
+      color: #52525b;
+      margin-bottom: 4px;
+    }
+    .player-name-field input {
+      width: 100%;
+      max-width: 320px;
+      padding: 6px 8px;
+      font: inherit;
+      font-size: 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
     #army-sheet td.editable {
       text-align: left;
       min-width: 72px;
@@ -365,7 +392,11 @@
 
       <div class="army-sheet-wrap">
         <h2>Army List Tracker</h2>
-        <p class="sheet-hint">Sync with a shared Google Sheet so everyone sees the same army lists. Grey example rows are read-only and are not synced.</p>
+        <p class="sheet-hint">Enter your name to edit your rows only. Changes auto-save to the shared Google Sheet; the page auto-refreshes every 30s. Grey example rows are read-only and are not synced.</p>
+        <div class="player-name-field">
+          <label for="player-name">Your name</label>
+          <input type="text" id="player-name" placeholder="Must match the Player column" autocomplete="name">
+        </div>
         <div class="sheet-sync">
           <label for="sheet-script-url">
             Google Apps Script URL
@@ -778,12 +809,16 @@
     }
 
     function updateScoreCell(td) {
-      td.className = "editable score-col " + scoreClass(td.textContent);
+      const readOnly = td.contentEditable === "false";
+      const base = readOnly ? "readonly-col score-col " : "editable score-col ";
+      td.className = base + scoreClass(td.textContent);
     }
 
     function updateDispositionCell(td) {
       const dispClass = dispositionClass(td.textContent);
-      td.className = "editable label-col" + (dispClass ? " " + dispClass : "");
+      const readOnly = td.contentEditable === "false";
+      const base = readOnly ? "readonly-col label-col" : "editable label-col";
+      td.className = base + (dispClass ? " " + dispClass : "");
     }
 
     const ARMY_FIELDS = ["player", "faction", "detachment1", "detachment2", "disposition"];
@@ -791,11 +826,93 @@
     const DEFAULT_SHEET_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxe1bdpf1pOXWU1WT3_6paAvb3TcSC_t4fspRMKtuQgnfX1DWL_OTHm5oKYK_1y67c2fg/exec";
     const SHEET_URL_KEY = "armySheetScriptUrl";
     const SHEET_AUTO_KEY = "armySheetAutoRefresh";
+    const PLAYER_NAME_KEY = "armySheetPlayerName";
     const SHEET_REFRESH_MS = 30000;
+    const AUTO_SAVE_MS = 2000;
 
     let sheetRefreshTimer = null;
+    let autoSaveTimer = null;
+    let sheetDirty = false;
+    let isSaving = false;
 
-    function createEditableRow() {
+    function getPlayerName() {
+      return (document.getElementById("player-name").value || "").trim();
+    }
+
+    function normalizeName(value) {
+      return (value || "").trim().toLowerCase();
+    }
+
+    function rowPlayerName(tr) {
+      return (tr.cells[0].innerText || "").trim();
+    }
+
+    function isRowOwned(tr) {
+      const name = getPlayerName();
+      if (!name) return false;
+      return normalizeName(rowPlayerName(tr)) === normalizeName(name);
+    }
+
+    function markSheetDirty() {
+      sheetDirty = true;
+    }
+
+    function scheduleAutoSave() {
+      if (!getPlayerName()) return;
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => autoSaveToSheet(), AUTO_SAVE_MS);
+    }
+
+    function attachRowEditHandlers(tr) {
+      [...tr.cells].forEach((td, i) => {
+        const onEdit = () => {
+          if (i === 4) updateDispositionCell(td);
+          else if (i >= 5) updateScoreCell(td);
+          if (td.contentEditable === "true") {
+            markSheetDirty();
+            scheduleAutoSave();
+          }
+        };
+        td.addEventListener("input", onEdit);
+        td.addEventListener("blur", onEdit);
+      });
+    }
+
+    function applyRowOwnership(tr) {
+      const name = getPlayerName();
+      const owned = !!name && isRowOwned(tr);
+
+      tr.classList.toggle("readonly-row", !owned);
+      tr.classList.toggle("owned-row", owned);
+
+      [...tr.cells].forEach((td, i) => {
+        if (owned) {
+          if (i === 0) {
+            td.contentEditable = "false";
+            td.textContent = name;
+            td.className = "readonly-col label-col";
+          } else if (i < 5) {
+            td.contentEditable = "true";
+            td.className = "editable label-col";
+          } else {
+            td.contentEditable = "true";
+            updateScoreCell(td);
+          }
+          if (i === 4) updateDispositionCell(td);
+        } else {
+          td.contentEditable = "false";
+          if (i < 5) td.className = "readonly-col label-col";
+          else updateScoreCell(td);
+          if (i === 4) updateDispositionCell(td);
+        }
+      });
+    }
+
+    function applyAllRowOwnership() {
+      document.querySelectorAll("#army-sheet tbody tr.editable-row").forEach(applyRowOwnership);
+    }
+
+    function createEditableRow(data = {}) {
       const tr = document.createElement("tr");
       tr.className = "editable-row";
 
@@ -813,10 +930,6 @@
         td.contentEditable = "true";
         td.spellcheck = false;
         td.dataset.placeholder = col.placeholder;
-        if (col.placeholder === "Disposition") {
-          td.addEventListener("input", () => updateDispositionCell(td));
-          td.addEventListener("blur", () => updateDispositionCell(td));
-        }
         tr.appendChild(td);
       });
 
@@ -826,11 +939,14 @@
         td.contentEditable = "true";
         td.spellcheck = false;
         td.dataset.placeholder = "—";
-        td.addEventListener("input", () => updateScoreCell(td));
-        td.addEventListener("blur", () => updateScoreCell(td));
         tr.appendChild(td);
       }
 
+      const rowData = { ...data };
+      if (!rowData.player && getPlayerName()) rowData.player = getPlayerName();
+      fillEditableRow(tr, rowData);
+      attachRowEditHandlers(tr);
+      applyRowOwnership(tr);
       return tr;
     }
 
@@ -864,15 +980,14 @@
       body.querySelectorAll("tr.editable-row").forEach(tr => tr.remove());
 
       if (rows.length === 0) {
-        for (let i = 0; i < 3; i++) body.appendChild(createEditableRow());
+        if (getPlayerName()) body.appendChild(createEditableRow({ player: getPlayerName() }));
         return;
       }
 
       rows.forEach(rowData => {
-        const tr = createEditableRow();
-        fillEditableRow(tr, rowData);
-        body.appendChild(tr);
+        body.appendChild(createEditableRow(rowData));
       });
+      applyAllRowOwnership();
     }
 
     function setSheetStatus(message, type = "") {
@@ -899,12 +1014,32 @@
       const url = queryUrl || savedUrl || DEFAULT_SHEET_SCRIPT_URL;
 
       document.getElementById("sheet-script-url").value = url;
-      document.getElementById("auto-refresh-sheet").checked = localStorage.getItem(SHEET_AUTO_KEY) === "1";
+      const savedAuto = localStorage.getItem(SHEET_AUTO_KEY);
+      document.getElementById("auto-refresh-sheet").checked = savedAuto !== "0";
 
       if (url) {
         localStorage.setItem(SHEET_URL_KEY, url);
-        setSheetStatus("Sheet URL saved. Load to pull shared rows, or Save to push your edits.");
+        setSheetStatus("Connected to Google Sheet. Enter your name to edit your rows.");
       }
+    }
+
+    function loadPlayerName() {
+      const params = new URLSearchParams(window.location.search);
+      const name = params.get("name") || params.get("player") || localStorage.getItem(PLAYER_NAME_KEY) || "";
+      document.getElementById("player-name").value = name;
+      if (name) localStorage.setItem(PLAYER_NAME_KEY, name);
+    }
+
+    function onPlayerNameChange() {
+      const name = getPlayerName();
+      if (name) localStorage.setItem(PLAYER_NAME_KEY, name);
+      applyAllRowOwnership();
+      if (!name) setSheetStatus("Enter your name to edit rows.", "err");
+    }
+
+    function isEditingOwnedRow() {
+      const active = document.activeElement;
+      return active && active.closest && active.closest("tr.editable-row.owned-row");
     }
 
     function validateSheetUrl(url) {
@@ -915,6 +1050,10 @@
       const url = getSheetScriptUrl();
       if (!validateSheetUrl(url)) {
         setSheetStatus("Enter a valid Apps Script web app URL ending in /exec.", "err");
+        return false;
+      }
+
+      if (!options.force && (sheetDirty || isEditingOwnedRow())) {
         return false;
       }
 
@@ -937,16 +1076,21 @@
       }
     }
 
-    async function saveToSheet() {
+    async function saveToSheet(options = {}) {
       const url = getSheetScriptUrl();
       if (!validateSheetUrl(url)) {
-        setSheetStatus("Enter a valid Apps Script web app URL ending in /exec.", "err");
+        if (!options.silent) setSheetStatus("Enter a valid Apps Script web app URL ending in /exec.", "err");
+        return false;
+      }
+
+      if (!getPlayerName() && !options.manual) {
         return false;
       }
 
       saveSheetConfig();
-      setSheetStatus("Saving to Google Sheet…");
+      if (!options.silent) setSheetStatus("Saving to Google Sheet…");
       const rows = getArmyRows();
+      isSaving = true;
 
       try {
         const response = await fetch(url, {
@@ -957,12 +1101,26 @@
         if (!response.ok) throw new Error("HTTP " + response.status);
         const data = await response.json();
         const count = data.count != null ? data.count : rows.length;
-        setSheetStatus("Saved " + count + " row(s) to Google Sheet.", "ok");
+        sheetDirty = false;
+        if (options.isAuto) {
+          setSheetStatus("Auto-saved " + count + " row(s).", "ok");
+        } else if (!options.silent) {
+          setSheetStatus("Saved " + count + " row(s) to Google Sheet.", "ok");
+        }
         return true;
       } catch (err) {
-        setSheetStatus("Save failed. Check the URL and that the Apps Script is deployed for Anyone.", "err");
+        if (!options.silent) {
+          setSheetStatus("Save failed. Check the URL and that the Apps Script is deployed for Anyone.", "err");
+        }
         return false;
+      } finally {
+        isSaving = false;
       }
+    }
+
+    async function autoSaveToSheet() {
+      if (!sheetDirty || isSaving || !getPlayerName()) return;
+      await saveToSheet({ silent: true, isAuto: true });
     }
 
     function updateSheetRefreshTimer() {
@@ -980,22 +1138,35 @@
       }, SHEET_REFRESH_MS);
     }
 
-    function initArmySheet() {
+    async function initArmySheet() {
       const body = document.getElementById("army-sheet-body");
-      for (let i = 0; i < 3; i++) {
-        body.appendChild(createEditableRow());
-      }
 
       loadSheetConfig();
-      updateSheetRefreshTimer();
+      loadPlayerName();
 
       document.getElementById("sheet-script-url").addEventListener("change", saveSheetConfig);
       document.getElementById("auto-refresh-sheet").addEventListener("change", updateSheetRefreshTimer);
-      document.getElementById("load-from-sheet").addEventListener("click", () => loadFromSheet());
-      document.getElementById("save-to-sheet").addEventListener("click", () => saveToSheet());
+      document.getElementById("player-name").addEventListener("input", onPlayerNameChange);
+      document.getElementById("load-from-sheet").addEventListener("click", () => loadFromSheet({ force: true }));
+      document.getElementById("save-to-sheet").addEventListener("click", () => saveToSheet({ manual: true }));
+
+      if (validateSheetUrl(getSheetScriptUrl())) {
+        await loadFromSheet({ silent: true, force: true });
+      }
+
+      applyAllRowOwnership();
+      updateSheetRefreshTimer();
 
       document.getElementById("add-army-row").addEventListener("click", () => {
-        body.appendChild(createEditableRow());
+        const name = getPlayerName();
+        if (!name) {
+          setSheetStatus("Enter your name before adding a row.", "err");
+          document.getElementById("player-name").focus();
+          return;
+        }
+        body.appendChild(createEditableRow({ player: name }));
+        markSheetDirty();
+        scheduleAutoSave();
       });
 
       document.getElementById("copy-army-sheet").addEventListener("click", async () => {
