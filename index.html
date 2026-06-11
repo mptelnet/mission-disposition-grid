@@ -71,12 +71,36 @@
       font-size: 0.82rem;
       color: #71717a;
     }
-    .sheet-actions {
-      margin-top: 10px;
+    .sheet-sync {
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fafafa;
+    }
+    .sheet-sync label {
+      display: block;
+      font-size: 0.82rem;
+      color: #52525b;
+      margin-bottom: 8px;
+    }
+    .sheet-sync input[type="url"] {
+      width: 100%;
+      margin-top: 4px;
+      padding: 6px 8px;
+      font: inherit;
+      font-size: 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .sheet-sync-actions {
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
+      align-items: center;
+      margin-top: 10px;
     }
+    .sheet-sync-actions button,
     .sheet-actions button {
       font: inherit;
       font-size: 0.85rem;
@@ -86,7 +110,34 @@
       background: white;
       cursor: pointer;
     }
+    .sheet-sync-actions button:hover,
     .sheet-actions button:hover { background: #f4f4f5; }
+    .sheet-sync-actions button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .sheet-sync-auto {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.82rem;
+      color: #52525b;
+      cursor: pointer;
+    }
+    .sheet-sync-status {
+      margin: 8px 0 0;
+      font-size: 0.8rem;
+      color: #71717a;
+      min-height: 1.2em;
+    }
+    .sheet-sync-status.ok { color: #15803d; }
+    .sheet-sync-status.err { color: #b91c1c; }
+    .sheet-actions {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     table {
       border-collapse: collapse;
       width: 100%;
@@ -314,7 +365,22 @@
 
       <div class="army-sheet-wrap">
         <h2>Army List Tracker</h2>
-        <p class="sheet-hint">Select cells and copy (Ctrl+C) to paste into Google Sheets. Grey example rows are read-only and excluded from Copy all rows.</p>
+        <p class="sheet-hint">Sync with a shared Google Sheet so everyone sees the same army lists. Grey example rows are read-only and are not synced.</p>
+        <div class="sheet-sync">
+          <label for="sheet-script-url">
+            Google Apps Script URL
+            <input type="url" id="sheet-script-url" placeholder="https://script.google.com/macros/s/…/exec">
+          </label>
+          <div class="sheet-sync-actions">
+            <button type="button" id="load-from-sheet">Load from Sheet</button>
+            <button type="button" id="save-to-sheet">Save to Sheet</button>
+            <label class="sheet-sync-auto">
+              <input type="checkbox" id="auto-refresh-sheet">
+              Auto-refresh every 30s
+            </label>
+          </div>
+          <p class="sheet-sync-status" id="sheet-sync-status">Paste your Apps Script web app URL above. Setup instructions are in the repo README.</p>
+        </div>
         <table id="army-sheet">
           <thead>
             <tr>
@@ -720,6 +786,15 @@
       td.className = "editable label-col" + (dispClass ? " " + dispClass : "");
     }
 
+    const ARMY_FIELDS = ["player", "faction", "detachment1", "detachment2", "disposition"];
+    const SCORE_FIELDS = ["priority", "disruption", "recon", "takehold", "purge"];
+    const DEFAULT_SHEET_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxe1bdpf1pOXWU1WT3_6paAvb3TcSC_t4fspRMKtuQgnfX1DWL_OTHm5oKYK_1y67c2fg/exec";
+    const SHEET_URL_KEY = "armySheetScriptUrl";
+    const SHEET_AUTO_KEY = "armySheetAutoRefresh";
+    const SHEET_REFRESH_MS = 30000;
+
+    let sheetRefreshTimer = null;
+
     function createEditableRow() {
       const tr = document.createElement("tr");
       tr.className = "editable-row";
@@ -759,11 +834,165 @@
       return tr;
     }
 
+    function fillEditableRow(tr, data = {}) {
+      ARMY_FIELDS.forEach((key, i) => {
+        tr.cells[i].textContent = data[key] || "";
+        if (key === "disposition") updateDispositionCell(tr.cells[i]);
+      });
+      SCORE_FIELDS.forEach((key, i) => {
+        const td = tr.cells[5 + i];
+        td.textContent = data[key] || "";
+        updateScoreCell(td);
+      });
+    }
+
+    function getArmyRows() {
+      return [...document.querySelectorAll("#army-sheet tbody tr.editable-row")].map(tr => {
+        const row = {};
+        ARMY_FIELDS.forEach((key, i) => {
+          row[key] = (tr.cells[i].innerText || "").trim();
+        });
+        SCORE_FIELDS.forEach((key, i) => {
+          row[key] = (tr.cells[5 + i].innerText || "").trim();
+        });
+        return row;
+      }).filter(row => Object.values(row).some(value => value));
+    }
+
+    function setArmyRows(rows) {
+      const body = document.getElementById("army-sheet-body");
+      body.querySelectorAll("tr.editable-row").forEach(tr => tr.remove());
+
+      if (rows.length === 0) {
+        for (let i = 0; i < 3; i++) body.appendChild(createEditableRow());
+        return;
+      }
+
+      rows.forEach(rowData => {
+        const tr = createEditableRow();
+        fillEditableRow(tr, rowData);
+        body.appendChild(tr);
+      });
+    }
+
+    function setSheetStatus(message, type = "") {
+      const status = document.getElementById("sheet-sync-status");
+      status.textContent = message;
+      status.className = "sheet-sync-status" + (type ? " " + type : "");
+    }
+
+    function getSheetScriptUrl() {
+      const input = document.getElementById("sheet-script-url");
+      return (input.value || "").trim();
+    }
+
+    function saveSheetConfig() {
+      const url = getSheetScriptUrl();
+      if (url) localStorage.setItem(SHEET_URL_KEY, url);
+      localStorage.setItem(SHEET_AUTO_KEY, document.getElementById("auto-refresh-sheet").checked ? "1" : "0");
+    }
+
+    function loadSheetConfig() {
+      const params = new URLSearchParams(window.location.search);
+      const queryUrl = params.get("sheetUrl") || params.get("sheet");
+      const savedUrl = localStorage.getItem(SHEET_URL_KEY) || "";
+      const url = queryUrl || savedUrl || DEFAULT_SHEET_SCRIPT_URL;
+
+      document.getElementById("sheet-script-url").value = url;
+      document.getElementById("auto-refresh-sheet").checked = localStorage.getItem(SHEET_AUTO_KEY) === "1";
+
+      if (url) {
+        localStorage.setItem(SHEET_URL_KEY, url);
+        setSheetStatus("Sheet URL saved. Load to pull shared rows, or Save to push your edits.");
+      }
+    }
+
+    function validateSheetUrl(url) {
+      return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(url);
+    }
+
+    async function loadFromSheet(options = {}) {
+      const url = getSheetScriptUrl();
+      if (!validateSheetUrl(url)) {
+        setSheetStatus("Enter a valid Apps Script web app URL ending in /exec.", "err");
+        return false;
+      }
+
+      saveSheetConfig();
+      if (!options.silent) setSheetStatus("Loading from Google Sheet…");
+
+      try {
+        const response = await fetch(url + "?t=" + Date.now());
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const data = await response.json();
+        setArmyRows(Array.isArray(data.rows) ? data.rows : []);
+        const count = Array.isArray(data.rows) ? data.rows.length : 0;
+        setSheetStatus("Loaded " + count + " row(s) from Google Sheet.", "ok");
+        return true;
+      } catch (err) {
+        if (!options.silent) {
+          setSheetStatus("Load failed. Check the URL and that the Apps Script is deployed for Anyone.", "err");
+        }
+        return false;
+      }
+    }
+
+    async function saveToSheet() {
+      const url = getSheetScriptUrl();
+      if (!validateSheetUrl(url)) {
+        setSheetStatus("Enter a valid Apps Script web app URL ending in /exec.", "err");
+        return false;
+      }
+
+      saveSheetConfig();
+      setSheetStatus("Saving to Google Sheet…");
+      const rows = getArmyRows();
+
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ rows })
+        });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const data = await response.json();
+        const count = data.count != null ? data.count : rows.length;
+        setSheetStatus("Saved " + count + " row(s) to Google Sheet.", "ok");
+        return true;
+      } catch (err) {
+        setSheetStatus("Save failed. Check the URL and that the Apps Script is deployed for Anyone.", "err");
+        return false;
+      }
+    }
+
+    function updateSheetRefreshTimer() {
+      if (sheetRefreshTimer) {
+        clearInterval(sheetRefreshTimer);
+        sheetRefreshTimer = null;
+      }
+
+      const enabled = document.getElementById("auto-refresh-sheet").checked;
+      saveSheetConfig();
+      if (!enabled || !validateSheetUrl(getSheetScriptUrl())) return;
+
+      sheetRefreshTimer = setInterval(() => {
+        loadFromSheet({ silent: true });
+      }, SHEET_REFRESH_MS);
+    }
+
     function initArmySheet() {
       const body = document.getElementById("army-sheet-body");
       for (let i = 0; i < 3; i++) {
         body.appendChild(createEditableRow());
       }
+
+      loadSheetConfig();
+      updateSheetRefreshTimer();
+
+      document.getElementById("sheet-script-url").addEventListener("change", saveSheetConfig);
+      document.getElementById("auto-refresh-sheet").addEventListener("change", updateSheetRefreshTimer);
+      document.getElementById("load-from-sheet").addEventListener("click", () => loadFromSheet());
+      document.getElementById("save-to-sheet").addEventListener("click", () => saveToSheet());
 
       document.getElementById("add-army-row").addEventListener("click", () => {
         body.appendChild(createEditableRow());
