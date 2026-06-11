@@ -1,0 +1,653 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mission Disposition Grid</title>
+  <style>
+    :root {
+      --priority: #c9920a;
+      --disruption: #2563eb;
+      --recon: #0d9488;
+      --takehold: #16a34a;
+      --purge: #dc2626;
+      --bg: #f4f4f5;
+      --cell-bg: #ffffff;
+      --border: #d4d4d8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Calibri, "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: #18181b;
+      min-height: 100vh;
+    }
+    .page {
+      display: grid;
+      grid-template-columns: minmax(520px, 1fr) minmax(560px, 1.1fr);
+      gap: 28px;
+      padding: 24px;
+      max-width: 2200px;
+      margin: 0 auto;
+      align-items: start;
+    }
+    h1 {
+      grid-column: 1 / -1;
+      margin: 0 0 4px;
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    .subtitle {
+      grid-column: 1 / -1;
+      margin: 0 0 16px;
+      color: #52525b;
+      font-size: 0.95rem;
+    }
+    .left-column {
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      min-width: 0;
+    }
+    .grid-wrap { overflow-x: auto; }
+    .army-sheet-wrap h2 {
+      margin: 0 0 4px;
+      font-size: 1.15rem;
+    }
+    .sheet-hint {
+      margin: 0 0 10px;
+      font-size: 0.82rem;
+      color: #71717a;
+    }
+    .sheet-actions {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .sheet-actions button {
+      font: inherit;
+      font-size: 0.85rem;
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+    }
+    .sheet-actions button:hover { background: #f4f4f5; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    #army-sheet th,
+    #army-sheet td {
+      border: 1px solid #000;
+      padding: 6px 8px;
+      font-size: 0.88rem;
+      vertical-align: middle;
+    }
+    #army-sheet thead th {
+      font-weight: 700;
+      text-align: center;
+      white-space: nowrap;
+    }
+    #army-sheet .label-col { text-align: left; min-width: 72px; }
+    #army-sheet .score-col { text-align: center; min-width: 64px; font-weight: 700; }
+    #army-sheet .example-row td {
+      user-select: text;
+      cursor: default;
+      color: #64748b;
+    }
+    #army-sheet .example-row td.label-col,
+    #army-sheet .example-row td:not(.score-col) {
+      background: #e8e8ec;
+    }
+    #army-sheet .example-row td.score-col {
+      opacity: 0.82;
+    }
+    #army-sheet td.editable {
+      text-align: left;
+      min-width: 72px;
+      outline: none;
+    }
+    #army-sheet td.editable.score-col { text-align: center; }
+    #army-sheet td.editable:focus {
+      box-shadow: inset 0 0 0 2px #3b82f6;
+      background: #fafcff;
+    }
+    #army-sheet td.editable:empty::before {
+      content: attr(data-placeholder);
+      color: #c4c4c4;
+      pointer-events: none;
+    }
+    .score-5 { background: #1b7a3d; color: #fff; }
+    .score-4 { background: #b7e4c7; color: #1b4332; }
+    .score-35 { background: #d8f3dc; color: #1b4332; }
+    .score-3 { background: #fff3b0; color: #5c4a00; }
+    .score-2 { background: #f8c9b9; color: #7f2b0a; }
+    .score-1 { background: #c92a2a; color: #fff; }
+    .score-unknown { background: #d0bfff; color: #5f3dc4; font-weight: 700; }
+    th, td {
+      border: 1px solid var(--border);
+      text-align: center;
+      vertical-align: middle;
+    }
+    .corner {
+      background: #fafafa;
+      min-width: 130px;
+      font-size: 0.75rem;
+      color: #71717a;
+      padding: 12px 8px;
+      line-height: 1.3;
+    }
+    .col-header {
+      padding: 14px 10px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      font-style: italic;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    .row-header {
+      padding: 14px 12px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .cell {
+      min-width: 120px;
+      min-height: 72px;
+      padding: 10px;
+      cursor: pointer;
+      transition: background .15s, box-shadow .15s;
+      position: relative;
+    }
+    .cell:hover {
+      background: #f8fafc;
+    }
+    .cell.hover {
+      box-shadow: inset 0 0 0 2px #cbd5e1;
+    }
+    .cell.locked {
+      background: #eff6ff;
+      box-shadow: inset 0 0 0 3px #3b82f6;
+    }
+    .cell.empty {
+      cursor: default;
+      color: #a1a1aa;
+      font-size: 0.85rem;
+    }
+    .cell.empty:hover { box-shadow: none; background: var(--cell-bg); }
+    .cell-label {
+      font-size: 0.9rem;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+    .cell-mission {
+      margin-top: 6px;
+      font-size: 0.72rem;
+      color: #52525b;
+      line-height: 1.25;
+    }
+    .priority { color: var(--priority); }
+    .disruption { color: var(--disruption); }
+    .recon { color: var(--recon); }
+    .takehold { color: var(--takehold); }
+    .purge { color: var(--purge); }
+    .preview {
+      position: sticky;
+      top: 24px;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 320px;
+      box-shadow: 0 4px 12px rgba(0,0,0,.08);
+    }
+    .preview-placeholder {
+      color: #a1a1aa;
+      font-size: 0.95rem;
+      padding: 40px 0;
+      text-align: center;
+    }
+    .preview-section + .preview-section {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 2px solid #e4e4e7;
+    }
+    .preview-section h2 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .preview-section .meta {
+      margin: 0 0 12px;
+      font-size: 0.85rem;
+      color: #52525b;
+      line-height: 1.4;
+    }
+    .mission-block + .mission-block {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #f0f0f0;
+    }
+    .mission-title {
+      font-weight: 700;
+      margin-bottom: 10px;
+      font-size: 0.95rem;
+    }
+    .card-images {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .card-wrap {
+      text-align: center;
+      flex: 1 1 320px;
+      max-width: 400px;
+    }
+    .card-images:has(.card-wrap:only-child) .card-wrap {
+      flex: 0 1 500px;
+      max-width: 500px;
+    }
+    .card-wrap img {
+      width: 100%;
+      height: auto;
+      border-radius: 6px;
+      border: 1px solid #e4e4e7;
+      background: #fafafa;
+      display: block;
+    }
+    .card-wrap .side-label {
+      margin-top: 8px;
+      font-size: 0.85rem;
+      color: #71717a;
+    }
+    @media (max-width: 1200px) {
+      .page { grid-template-columns: 1fr; }
+      .preview { position: static; }
+      .card-wrap { max-width: 440px; }
+      .card-images:has(.card-wrap:only-child) .card-wrap { max-width: 560px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Primary Mission Disposition Grid</h1>
+    <p class="subtitle">Click a cell to lock the preview. Hover to peek; it reverts to the locked cell when you move away. Columns = your disposition, rows = opponent disposition.</p>
+    <div class="left-column">
+      <div class="grid-wrap">
+        <table id="grid-table">
+          <thead>
+            <tr>
+              <th class="corner">Opponent ↓<br>Your →</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="army-sheet-wrap">
+        <h2>Army List Tracker</h2>
+        <p class="sheet-hint">Select cells and copy (Ctrl+C) to paste into Google Sheets. Grey example rows are read-only and excluded from Copy all rows.</p>
+        <table id="army-sheet">
+          <thead>
+            <tr>
+              <th class="label-col">Player</th>
+              <th class="label-col">Faction</th>
+              <th class="label-col">Detachment 1</th>
+              <th class="label-col">Detachment 2</th>
+              <th class="label-col">Disposition</th>
+              <th class="score-col priority">PRIORITY ASSETS</th>
+              <th class="score-col disruption">DISRUPTION</th>
+              <th class="score-col recon">RECONNAISSANCE</th>
+              <th class="score-col takehold">TAKE AND HOLD</th>
+              <th class="score-col purge">PURGE THE FOE</th>
+            </tr>
+          </thead>
+          <tbody id="army-sheet-body">
+            <tr class="example-row">
+              <td class="label-col">MP</td>
+              <td class="label-col">Orks</td>
+              <td class="label-col">War Horde</td>
+              <td class="label-col"></td>
+              <td class="label-col purge">PURGE THE FOE</td>
+              <td class="score-col score-4">4.0</td>
+              <td class="score-col score-5">5.0</td>
+              <td class="score-col score-4">4.0</td>
+              <td class="score-col score-5">5.0</td>
+              <td class="score-col score-35">3.5</td>
+            </tr>
+            <tr class="example-row">
+              <td class="label-col">MP</td>
+              <td class="label-col">Votann</td>
+              <td class="label-col">Delve Assault Shift</td>
+              <td class="label-col">Sagitaur shit</td>
+              <td class="label-col purge">PURGE THE FOE</td>
+              <td class="score-col score-3">3.0</td>
+              <td class="score-col score-3">3.0</td>
+              <td class="score-col score-3">3.0</td>
+              <td class="score-col score-3">3.0</td>
+              <td class="score-col score-2">2.0</td>
+            </tr>
+            <tr class="example-row">
+              <td class="label-col">MP</td>
+              <td class="label-col">Votann</td>
+              <td class="label-col">Delve Assault Shift</td>
+              <td class="label-col">Sagitaur shit</td>
+              <td class="label-col priority">PRIORITY ASSETS</td>
+              <td class="score-col score-unknown">?</td>
+              <td class="score-col score-4">4.0</td>
+              <td class="score-col score-4">4.0</td>
+              <td class="score-col score-3">3.0</td>
+              <td class="score-col score-1">1.0</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="sheet-actions">
+          <button type="button" id="add-army-row">+ Add row</button>
+          <button type="button" id="copy-army-sheet">Copy all rows</button>
+        </div>
+      </div>
+    </div>
+    <aside class="preview" id="preview">
+      <div class="preview-placeholder">Click a grid cell to lock the preview</div>
+    </aside>
+  </div>
+  <script>
+    const DISPOSITIONS = ["PRIORITY ASSETS","DISRUPTION","RECONNAISSANCE","TAKE AND HOLD","PURGE THE FOE"];
+    const CLASS_MAP = {
+      "PRIORITY ASSETS": "priority",
+      "DISRUPTION": "disruption",
+      "RECONNAISSANCE": "recon",
+      "TAKE AND HOLD": "takehold",
+      "PURGE THE FOE": "purge"
+    };
+    const GRID = {"PRIORITY ASSETS":{"DISRUPTION":[{"name":"LOCATE AND DENY","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc10088995218633394316A6254ECCB8C8A23FDB30958483EBE404E294144F.png","url":"https://steamusercontent-a.akamaihd.net/ugc/10088995218633394316/A6254ECCB8C8A23FDB30958483EBE404E294144F/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc14043532756138423003E0352E3DD22882C6F8C722426D625B5B952A2756.png","url":"https://steamusercontent-a.akamaihd.net/ugc/14043532756138423003/E0352E3DD22882C6F8C722426D625B5B952A2756/"}]}],"RECONNAISSANCE":[{"name":"SEARCH AND SCOUR","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc10334253286256469922B523A2C8B990A4D1F7BCFC13A5A3ACCF8D25CA2B.png","url":"https://steamusercontent-a.akamaihd.net/ugc/10334253286256469922/B523A2C8B990A4D1F7BCFC13A5A3ACCF8D25CA2B/"}]}],"TAKE AND HOLD":[{"name":"INESCAPABLE DOMINION","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc14563337968862762236F385850323709686EF049C042DDED77B43D32DA8.png","url":"https://steamusercontent-a.akamaihd.net/ugc/14563337968862762236/F385850323709686EF049C042DDED77B43D32DA8/"}]}],"PURGE THE FOE":[{"name":"DESTROYER\u0027S WRATH","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc11567440987504715456D4742AD6158714412CFCC115AF62B127EDB030F2.png","url":"https://steamusercontent-a.akamaihd.net/ugc/11567440987504715456/D4742AD6158714412CFCC115AF62B127EDB030F2/"}]}],"PRIORITY ASSETS":[{"name":"SABOTAGE","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc16465397426307259296404AA5DF26031EDE75D311B5AA87AAAEEB6BF057.png","url":"https://steamusercontent-a.akamaihd.net/ugc/16465397426307259296/404AA5DF26031EDE75D311B5AA87AAAEEB6BF057/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc12919644394301016512597AB730C4347059EB27B87A3238F4D083609DD1.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12919644394301016512/597AB730C4347059EB27B87A3238F4D083609DD1/"}]}]},"PURGE THE FOE":{"DISRUPTION":[{"name":"DELAYING ACTION","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc14056150639322109981838998B9C6F905D3A6B2C4BCB94FB59D4A015EA0.png","url":"https://steamusercontent-a.akamaihd.net/ugc/14056150639322109981/838998B9C6F905D3A6B2C4BCB94FB59D4A015EA0/"}]}],"RECONNAISSANCE":[{"name":"TRIANGULATION","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc163050028989269599409B755ABF9D2DDC45B9FC3B6DAE9B3DAC4D2FD286.png","url":"https://steamusercontent-a.akamaihd.net/ugc/16305002898926959940/9B755ABF9D2DDC45B9FC3B6DAE9B3DAC4D2FD286/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc16745511120062998959FAF4B7476FA3B6DBF4465FEB6C830207403BF4B6.png","url":"https://steamusercontent-a.akamaihd.net/ugc/16745511120062998959/FAF4B7476FA3B6DBF4465FEB6C830207403BF4B6/"}]}],"TAKE AND HOLD":[{"name":"IMMOVABLE OBJECT","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc1673798004956855905575EB98539D2D97AB306E8EA1BC60EC748EB04CB0.png","url":"https://steamusercontent-a.akamaihd.net/ugc/16737980049568559055/75EB98539D2D97AB306E8EA1BC60EC748EB04CB0/"}]}],"PURGE THE FOE":[{"name":"MEATGRINDER","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc11861458306404584988A80A735F58597C14BB5A93363D53A9467DC4FFD0.png","url":"https://steamusercontent-a.akamaihd.net/ugc/11861458306404584988/A80A735F58597C14BB5A93363D53A9467DC4FFD0/"}]}],"PRIORITY ASSETS":[{"name":"VITAL LINK","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc121439737944188460503F33E60AC86FC6090A07D4BB53DF52350E215038.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12143973794418846050/3F33E60AC86FC6090A07D4BB53DF52350E215038/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc176496747845083308444CECC8042E325EDABA867F33A94042DE56DAAD6B.png","url":"https://steamusercontent-a.akamaihd.net/ugc/17649674784508330844/4CECC8042E325EDABA867F33A94042DE56DAAD6B/"}]}]},"TAKE AND HOLD":{"DISRUPTION":[{"name":"DEATH TRAP","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc127829377340819471993A5A41B55720DEDCAD87BE966D7FD0F57D41FB2C.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12782937734081947199/3A5A41B55720DEDCAD87BE966D7FD0F57D41FB2C/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc12806851416277860930C5176C35E9E1231828422D0609541EF44D3E456C.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12806851416277860930/C5176C35E9E1231828422D0609541EF44D3E456C/"}]}],"RECONNAISSANCE":[{"name":"RECONNAISSANCE SWEEP","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc99998632883529486783EAEDC5265D666CC23E1D0D9EE6052F4B1F4AE41.png","url":"https://steamusercontent-a.akamaihd.net/ugc/99998632883529486783/EAEDC5265D666CC23E1D0D9EE6052F4B1F4AE41/"}]}],"TAKE AND HOLD":[{"name":"BATTLEFIELD DOMINANCE","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc1329393557262644998671199DA9CCAE9D25C30BF50078D7D050D6D5EA90.png","url":"https://steamusercontent-a.akamaihd.net/ugc/13293935572626449986/71199DA9CCAE9D25C30BF50078D7D050D6D5EA90/"}]}],"PURGE THE FOE":[{"name":"UNSTOPPABLE FORCE","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc105566977277625115726C0597DF83F42293ACD847FEF9B4909BA9B61120.png","url":"https://steamusercontent-a.akamaihd.net/ugc/10556697727762511572/6C0597DF83F42293ACD847FEF9B4909BA9B61120/"}]}],"PRIORITY ASSETS":[{"name":"SECURE ASSET","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc122368754185940643757C487B63B199F635DA5EC9270A32B060253C43F5.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12236875418594064375/7C487B63B199F635DA5EC9270A32B060253C43F5/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc1700236209324544632551E29137B845431F6B8F59B9893BE7E3E610213E.png","url":"https://steamusercontent-a.akamaihd.net/ugc/17002362093245446325/51E29137B845431F6B8F59B9893BE7E3E610213E/"}]}]},"RECONNAISSANCE":{"DISRUPTION":[{"name":"SMOKE AND MIRRORS","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc182916651829262759536D898C97453740ADE87BF90B3B213E4A1EC65321.png","url":"https://steamusercontent-a.akamaihd.net/ugc/18291665182926275953/6D898C97453740ADE87BF90B3B213E4A1EC65321/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc14655563045409025704A7A782AC482AA82E73FD7D5BF8DFC7BCE1743487.png","url":"https://steamusercontent-a.akamaihd.net/ugc/14655563045409025704/A7A782AC482AA82E73FD7D5BF8DFC7BCE1743487/"}]}],"RECONNAISSANCE":[{"name":"GATHER INTEL","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc131609128155135453111956E8189EEF3474DA8F2FCBDCAC25219FDAD33A.png","url":"https://steamusercontent-a.akamaihd.net/ugc/13160912815513545311/1956E8189EEF3474DA8F2FCBDCAC25219FDAD33A/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc154745890748463449616F6C225D1B3E49ED2E954809C8E54882B7B58F92.png","url":"https://steamusercontent-a.akamaihd.net/ugc/15474589074846344961/6F6C225D1B3E49ED2E954809C8E54882B7B58F92/"}]}],"TAKE AND HOLD":[{"name":"PURGE AND SECURE","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc9828822287883644881D6ADE560C10F819609C0999CA00A2ADB0FB39C5C.png","url":"https://steamusercontent-a.akamaihd.net/ugc/9828822287883644881D/6ADE560C10F819609C0999CA00A2ADB0FB39C5C/"}]}],"PURGE THE FOE":[{"name":"CONSECRATE","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc1280308819970766432589298210172032E8A78D69B60B49460F5307A6C0.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12803088199707664325/89298210172032E8A78D69B60B49460F5307A6C0/"}]}],"PRIORITY ASSETS":[{"name":"VANGUARD OPERATION","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc1572832854096155785577DA79A206D96EC89E7EBE1029B060F8C0ADF233.png","url":"https://steamusercontent-a.akamaihd.net/ugc/15728328540961557855/77DA79A206D96EC89E7EBE1029B060F8C0ADF233/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc10138785981997817170F4AAE456DFD47EE7AE02DF06A6DFC3E557DDD7CE.png","url":"https://steamusercontent-a.akamaihd.net/ugc/10138785981997817170/F4AAE456DFD47EE7AE02DF06A6DFC3E557DDD7CE/"}]}]},"DISRUPTION":{"DISRUPTION":[{"name":"OUTMANOEUVRE","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc12350415882263786356442725542DC30B564242849552587BF3781AF57D.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12350415882263786356/442725542DC30B564242849552587BF3781AF57D/"}]}],"RECONNAISSANCE":[{"name":"SURVEIL THE FOE","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc157668144032241173435028F3460CFEF39655C237BA33B031EEE82FAF14.png","url":"https://steamusercontent-a.akamaihd.net/ugc/15766814403224117343/5028F3460CFEF39655C237BA33B031EEE82FAF14/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc150877982055068209667FF8090C14275C238A06AB6C827C88830F0A70BA.png","url":"https://steamusercontent-a.akamaihd.net/ugc/15087798205506820966/7FF8090C14275C238A06AB6C827C88830F0A70BA/"}]}],"TAKE AND HOLD":[{"name":"DETERMINED ACQUISITION","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc1115673076066135306949002A98C6C62F7100E6E6771D0A9B8E7515C5C8.png","url":"https://steamusercontent-a.akamaihd.net/ugc/11156730760661353069/49002A98C6C62F7100E6E6771D0A9B8E7515C5C8/"}]}],"PURGE THE FOE":[{"name":"PUNISHMENT","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc17563365823965506177FB5A669188F695DFACDC96C80BE534AEA1C92D34.png","url":"https://steamusercontent-a.akamaihd.net/ugc/17563365823965506177/FB5A669188F695DFACDC96C80BE534AEA1C92D34/"}]}],"PRIORITY ASSETS":[{"name":"EXTRACT RELIC","sides":[{"side":"1/2","image":"httpssteamusercontentaakamaihdnetugc108607020977418107726D7E78D59AB3866BC5A19FC49814D6FD4AFB6CE4.png","url":"https://steamusercontent-a.akamaihd.net/ugc/10860702097741810772/6D7E78D59AB3866BC5A19FC49814D6FD4AFB6CE4/"},{"side":"2/2","image":"httpssteamusercontentaakamaihdnetugc12090404910559011815FD7C4DB6004050EF220FAE66780AA950F4DF1CA0.png","url":"https://steamusercontent-a.akamaihd.net/ugc/12090404910559011815/FD7C4DB6004050EF220FAE66780AA950F4DF1CA0/"}]}]}};
+
+    function normalizeSides(sides) {
+      return Array.isArray(sides) ? sides : (sides ? [sides] : []);
+    }
+
+    function getMissions(opponent, yours) {
+      const missions = (GRID[opponent] && GRID[opponent][yours]) ? GRID[opponent][yours] : [];
+      return Array.isArray(missions) ? missions : (missions ? [missions] : []);
+    }
+
+    function sideLabel(side, total) {
+      if (total === 1) return "1/1";
+      return side.side;
+    }
+
+    function renderMissionCards(missions) {
+      const container = document.createElement("div");
+      missions.forEach(mission => {
+        const block = document.createElement("div");
+        block.className = "mission-block";
+        const mt = document.createElement("div");
+        mt.className = "mission-title";
+        mt.textContent = mission.name;
+        block.appendChild(mt);
+        const images = document.createElement("div");
+        images.className = "card-images";
+        const sides = normalizeSides(mission.sides);
+        sides.forEach(side => {
+          const wrap = document.createElement("div");
+          wrap.className = "card-wrap";
+          const img = document.createElement("img");
+          img.src = side.image;
+          img.alt = mission.name + " (" + sideLabel(side, sides.length) + ")";
+          img.loading = "lazy";
+          wrap.appendChild(img);
+          const cap = document.createElement("div");
+          cap.className = "side-label";
+          cap.textContent = sideLabel(side, sides.length);
+          wrap.appendChild(cap);
+          images.appendChild(wrap);
+        });
+        block.appendChild(images);
+        container.appendChild(block);
+      });
+      return container;
+    }
+
+    function renderPreviewSection(title, yours, opponent, missions, options = {}) {
+      const section = document.createElement("div");
+      section.className = "preview-section";
+      const heading = document.createElement("h2");
+      heading.textContent = title;
+      section.appendChild(heading);
+      const meta = document.createElement("p");
+      meta.className = "meta";
+      if (options.mirror) {
+        meta.innerHTML =
+          '<span class="' + CLASS_MAP[yours] + '"><strong>Disposition:</strong> ' + yours + ' (both players)</span>';
+      } else {
+        meta.innerHTML =
+          '<span class="' + CLASS_MAP[yours] + '"><strong>Disposition:</strong> ' + yours + '</span><br>' +
+          '<span class="' + CLASS_MAP[opponent] + '"><strong>vs Opponent:</strong> ' + opponent + '</span>';
+      }
+      section.appendChild(meta);
+      section.appendChild(renderMissionCards(missions));
+      return section;
+    }
+
+    function renderGrid() {
+      const table = document.getElementById("grid-table");
+      const headerRow = table.querySelector("thead tr");
+      DISPOSITIONS.forEach(yours => {
+        const th = document.createElement("th");
+        th.className = "col-header " + CLASS_MAP[yours];
+        th.textContent = yours;
+        headerRow.appendChild(th);
+      });
+
+      const tbody = table.querySelector("tbody");
+      DISPOSITIONS.forEach(opponent => {
+        const tr = document.createElement("tr");
+        const rowTh = document.createElement("th");
+        rowTh.className = "row-header " + CLASS_MAP[opponent];
+        rowTh.textContent = opponent;
+        tr.appendChild(rowTh);
+
+        DISPOSITIONS.forEach(yours => {
+          const td = document.createElement("td");
+          const list = getMissions(opponent, yours);
+
+          if (list.length === 0) {
+            td.className = "cell empty";
+            td.textContent = "—";
+          } else {
+            td.className = "cell";
+            td.dataset.yours = yours;
+            td.dataset.opponent = opponent;
+            const label = document.createElement("div");
+            label.className = "cell-label " + CLASS_MAP[opponent];
+            label.textContent = opponent;
+            td.appendChild(label);
+            const missionLine = document.createElement("div");
+            missionLine.className = "cell-mission";
+            missionLine.textContent = list.map(m => m.name).join(", ");
+            td.appendChild(missionLine);
+            td.addEventListener("click", () => lockCell(yours, opponent, list, td));
+            td.addEventListener("mouseenter", () => peekCell(yours, opponent, list, td));
+            td.addEventListener("mouseleave", () => unpeekCell(td));
+            td.addEventListener("keydown", (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                lockCell(yours, opponent, list, td);
+              }
+            });
+            td.tabIndex = 0;
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    let lockedCell = null;
+    let hoverCell = null;
+
+    function showPlaceholder() {
+      const preview = document.getElementById("preview");
+      preview.innerHTML = '<div class="preview-placeholder">Click a grid cell to lock the preview</div>';
+    }
+
+    function renderPreview(yours, opponent, missions) {
+      const preview = document.getElementById("preview");
+      preview.innerHTML = "";
+
+      const opponentMissions = getMissions(yours, opponent);
+      const isMirror = missions.length === 1 && opponentMissions.length === 1 &&
+        missions[0].name === opponentMissions[0].name;
+
+      if (isMirror) {
+        preview.appendChild(renderPreviewSection(
+          "Your & Opponent's Mission",
+          yours,
+          opponent,
+          missions,
+          { mirror: true }
+        ));
+      } else {
+        preview.appendChild(renderPreviewSection("Your Mission", yours, opponent, missions));
+        preview.appendChild(renderPreviewSection("Opponent's Mission", opponent, yours, opponentMissions));
+      }
+    }
+
+    function lockCell(yours, opponent, missions, td) {
+      if (lockedCell) lockedCell.classList.remove("locked");
+      lockedCell = td;
+      td.classList.add("locked");
+      renderPreview(yours, opponent, missions);
+    }
+
+    function peekCell(yours, opponent, missions, td) {
+      if (hoverCell && hoverCell !== lockedCell) hoverCell.classList.remove("hover");
+      hoverCell = td;
+      if (td !== lockedCell) td.classList.add("hover");
+      renderPreview(yours, opponent, missions);
+    }
+
+    function unpeekCell(td) {
+      if (hoverCell === td) {
+        td.classList.remove("hover");
+        hoverCell = null;
+      }
+      if (lockedCell) {
+        renderPreview(lockedCell.dataset.yours, lockedCell.dataset.opponent,
+          getMissions(lockedCell.dataset.opponent, lockedCell.dataset.yours));
+      } else {
+        showPlaceholder();
+      }
+    }
+
+    function scoreClass(value) {
+      const text = (value || "").trim();
+      if (!text || text === "?") return "score-unknown";
+      const num = parseFloat(text);
+      if (Number.isNaN(num)) return "";
+      if (num >= 4.75) return "score-5";
+      if (num >= 3.75) return "score-4";
+      if (num >= 3.25) return "score-35";
+      if (num >= 2.5) return "score-3";
+      if (num >= 1.5) return "score-2";
+      return "score-1";
+    }
+
+    function dispositionClass(value) {
+      const text = (value || "").trim().toUpperCase();
+      return CLASS_MAP[text] || "";
+    }
+
+    function updateScoreCell(td) {
+      td.className = "editable score-col " + scoreClass(td.textContent);
+    }
+
+    function updateDispositionCell(td) {
+      const dispClass = dispositionClass(td.textContent);
+      td.className = "editable label-col" + (dispClass ? " " + dispClass : "");
+    }
+
+    function createEditableRow() {
+      const tr = document.createElement("tr");
+      tr.className = "editable-row";
+
+      const textCols = [
+        { placeholder: "Player" },
+        { placeholder: "Faction" },
+        { placeholder: "Detachment 1" },
+        { placeholder: "Detachment 2" },
+        { placeholder: "Disposition" }
+      ];
+
+      textCols.forEach(col => {
+        const td = document.createElement("td");
+        td.className = "editable label-col";
+        td.contentEditable = "true";
+        td.spellcheck = false;
+        td.dataset.placeholder = col.placeholder;
+        if (col.placeholder === "Disposition") {
+          td.addEventListener("input", () => updateDispositionCell(td));
+          td.addEventListener("blur", () => updateDispositionCell(td));
+        }
+        tr.appendChild(td);
+      });
+
+      for (let i = 0; i < 5; i++) {
+        const td = document.createElement("td");
+        td.className = "editable score-col";
+        td.contentEditable = "true";
+        td.spellcheck = false;
+        td.dataset.placeholder = "—";
+        td.addEventListener("input", () => updateScoreCell(td));
+        td.addEventListener("blur", () => updateScoreCell(td));
+        tr.appendChild(td);
+      }
+
+      return tr;
+    }
+
+    function initArmySheet() {
+      const body = document.getElementById("army-sheet-body");
+      for (let i = 0; i < 3; i++) {
+        body.appendChild(createEditableRow());
+      }
+
+      document.getElementById("add-army-row").addEventListener("click", () => {
+        body.appendChild(createEditableRow());
+      });
+
+      document.getElementById("copy-army-sheet").addEventListener("click", async () => {
+        const headerRow = document.querySelector("#army-sheet thead tr");
+        const editableRows = [...document.querySelectorAll("#army-sheet tbody tr.editable-row")];
+        const rows = [headerRow, ...editableRows];
+        const tsv = rows.map(row => {
+          return [...row.cells].map(cell => (cell.innerText || "").replace(/\t/g, " ").trim()).join("\t");
+        }).join("\n");
+
+        try {
+          await navigator.clipboard.writeText(tsv);
+          const btn = document.getElementById("copy-army-sheet");
+          const original = btn.textContent;
+          btn.textContent = "Copied!";
+          setTimeout(() => { btn.textContent = original; }, 1500);
+        } catch (err) {
+          alert("Copy failed — select the table cells manually and press Ctrl+C.");
+        }
+      });
+    }
+
+    renderGrid();
+    initArmySheet();
+  </script>
+</body>
+</html>
+
