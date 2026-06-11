@@ -468,7 +468,7 @@
             <button type="button" id="load-from-sheet">Load from Sheet</button>
             <button type="button" id="save-to-sheet">Save to Sheet</button>
             <label class="sheet-sync-auto">
-              <input type="checkbox" id="auto-refresh-sheet">
+              <input type="checkbox" id="auto-refresh-sheet" checked disabled>
               Auto-refresh every 15s
             </label>
           </div>
@@ -947,7 +947,6 @@
     const SCORE_FIELDS = ["priority", "disruption", "recon", "takehold", "purge"];
     const DEFAULT_SHEET_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxe1bdpf1pOXWU1WT3_6paAvb3TcSC_t4fspRMKtuQgnfX1DWL_OTHm5oKYK_1y67c2fg/exec";
     const SHEET_URL_KEY = "armySheetScriptUrl";
-    const SHEET_AUTO_KEY = "armySheetAutoRefresh";
     const PLAYER_NAME_KEY = "armySheetPlayerName";
     const SHOW_MY_ROWS_KEY = "armySheetShowMyRowsOnly";
     const ADMIN_NAME = "mp";
@@ -1236,7 +1235,6 @@
     function saveSheetConfig() {
       const url = getSheetScriptUrl();
       if (url) localStorage.setItem(SHEET_URL_KEY, url);
-      localStorage.setItem(SHEET_AUTO_KEY, document.getElementById("auto-refresh-sheet").checked ? "1" : "0");
     }
 
     function loadSheetConfig() {
@@ -1246,8 +1244,6 @@
       const url = queryUrl || savedUrl || DEFAULT_SHEET_SCRIPT_URL;
 
       document.getElementById("sheet-script-url").value = url;
-      const savedAuto = localStorage.getItem(SHEET_AUTO_KEY);
-      document.getElementById("auto-refresh-sheet").checked = savedAuto !== "0";
 
       if (url) {
         localStorage.setItem(SHEET_URL_KEY, url);
@@ -1362,9 +1358,8 @@
         sheetRefreshTimer = null;
       }
 
-      const enabled = document.getElementById("auto-refresh-sheet").checked;
       saveSheetConfig();
-      if (!enabled || !validateSheetUrl(getSheetScriptUrl())) return;
+      if (!validateSheetUrl(getSheetScriptUrl())) return;
 
       sheetRefreshTimer = setInterval(() => {
         loadFromSheet({ silent: true });
@@ -1380,7 +1375,6 @@
       loadShowMyRowsFilter();
 
       document.getElementById("sheet-script-url").addEventListener("change", saveSheetConfig);
-      document.getElementById("auto-refresh-sheet").addEventListener("change", updateSheetRefreshTimer);
       document.getElementById("show-my-rows-only").addEventListener("change", onShowMyRowsChange);
       document.getElementById("player-name").addEventListener("input", onPlayerNameChange);
       document.getElementById("load-from-sheet").addEventListener("click", () => loadFromSheet({ force: true }));
