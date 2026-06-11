@@ -84,6 +84,31 @@
       color: #52525b;
       margin-bottom: 8px;
     }
+    .sheet-sync-url-field { display: none; }
+    #army-sheet .actions-col {
+      width: 36px;
+      min-width: 36px;
+      padding: 4px;
+      text-align: center;
+    }
+    .row-delete-btn {
+      font: inherit;
+      font-size: 1rem;
+      line-height: 1;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid #fecaca;
+      border-radius: 6px;
+      background: #fff;
+      color: #b91c1c;
+      cursor: pointer;
+    }
+    .row-delete-btn:hover { background: #fef2f2; }
+    .row-delete-btn:disabled {
+      opacity: 0;
+      pointer-events: none;
+    }
     .sheet-sync input[type="url"] {
       width: 100%;
       margin-top: 4px;
@@ -137,7 +162,9 @@
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
+      align-items: center;
     }
+    #army-sheet tbody tr.row-hidden { display: none; }
     table {
       border-collapse: collapse;
       width: 100%;
@@ -420,7 +447,7 @@
           <input type="text" id="player-name" placeholder="Must match the Player column" autocomplete="name">
         </div>
         <div class="sheet-sync">
-          <label for="sheet-script-url">
+          <label for="sheet-script-url" class="sheet-sync-url-field">
             Google Apps Script URL
             <input type="url" id="sheet-script-url" placeholder="https://script.google.com/macros/s/…/exec">
           </label>
@@ -432,7 +459,7 @@
               Auto-refresh every 30s
             </label>
           </div>
-          <p class="sheet-sync-status" id="sheet-sync-status">Paste your Apps Script web app URL above. Setup instructions are in the repo README.</p>
+          <p class="sheet-sync-status" id="sheet-sync-status">Connecting to shared Google Sheet…</p>
         </div>
         <table id="army-sheet">
           <thead>
@@ -447,6 +474,7 @@
               <th class="score-col recon">RECONNAISSANCE</th>
               <th class="score-col takehold">TAKE AND HOLD</th>
               <th class="score-col purge">PURGE THE FOE</th>
+              <th class="actions-col" aria-label="Actions"></th>
             </tr>
           </thead>
           <tbody id="army-sheet-body">
@@ -461,6 +489,7 @@
               <td class="score-col score-4">4.0</td>
               <td class="score-col score-5">5.0</td>
               <td class="score-col score-35">3.5</td>
+              <td class="actions-col"></td>
             </tr>
             <tr class="example-row">
               <td class="label-col">MP</td>
@@ -473,6 +502,7 @@
               <td class="score-col score-3">3.0</td>
               <td class="score-col score-3">3.0</td>
               <td class="score-col score-2">2.0</td>
+              <td class="actions-col"></td>
             </tr>
             <tr class="example-row">
               <td class="label-col">MP</td>
@@ -485,12 +515,16 @@
               <td class="score-col score-4">4.0</td>
               <td class="score-col score-3">3.0</td>
               <td class="score-col score-1">1.0</td>
+              <td class="actions-col"></td>
             </tr>
           </tbody>
         </table>
         <div class="sheet-actions">
           <button type="button" id="add-army-row">+ Add row</button>
-          <button type="button" id="copy-army-sheet">Copy all rows</button>
+          <label class="sheet-sync-auto">
+            <input type="checkbox" id="show-my-rows-only">
+            Show only my rows
+          </label>
         </div>
       </div>
     </div>
@@ -906,6 +940,7 @@
     const SHEET_URL_KEY = "armySheetScriptUrl";
     const SHEET_AUTO_KEY = "armySheetAutoRefresh";
     const PLAYER_NAME_KEY = "armySheetPlayerName";
+    const SHOW_MY_ROWS_KEY = "armySheetShowMyRowsOnly";
     const SHEET_REFRESH_MS = 30000;
     const AUTO_SAVE_MS = 2000;
 
@@ -932,6 +967,36 @@
       return normalizeName(rowPlayerName(tr)) === normalizeName(name);
     }
 
+    function isShowMyRowsOnlyEnabled() {
+      return document.getElementById("show-my-rows-only").checked;
+    }
+
+    function updateShowMyRowsControl() {
+      const checkbox = document.getElementById("show-my-rows-only");
+      const hasName = !!getPlayerName();
+      checkbox.disabled = !hasName;
+      if (!hasName) checkbox.checked = false;
+    }
+
+    function applyRowFilter() {
+      const filterOn = isShowMyRowsOnlyEnabled() && getPlayerName();
+      document.querySelectorAll("#army-sheet tbody tr").forEach(tr => {
+        tr.classList.toggle("row-hidden", filterOn && !isRowOwned(tr));
+      });
+    }
+
+    function onShowMyRowsChange() {
+      localStorage.setItem(SHOW_MY_ROWS_KEY, isShowMyRowsOnlyEnabled() ? "1" : "0");
+      applyRowFilter();
+    }
+
+    function loadShowMyRowsFilter() {
+      const checkbox = document.getElementById("show-my-rows-only");
+      checkbox.checked = localStorage.getItem(SHOW_MY_ROWS_KEY) === "1" && !!getPlayerName();
+      updateShowMyRowsControl();
+      applyRowFilter();
+    }
+
     function markSheetDirty() {
       sheetDirty = true;
     }
@@ -942,8 +1007,16 @@
       autoSaveTimer = setTimeout(() => autoSaveToSheet(), AUTO_SAVE_MS);
     }
 
+    function deleteEditableRow(tr) {
+      if (!tr.classList.contains("owned-row")) return;
+      tr.remove();
+      markSheetDirty();
+      scheduleAutoSave();
+    }
+
     function attachRowEditHandlers(tr) {
       [...tr.cells].forEach((td, i) => {
+        if (td.classList.contains("row-actions")) return;
         const select = td.querySelector("select.disposition-select");
         if (select) {
           select.addEventListener("change", () => {
@@ -976,6 +1049,12 @@
       tr.classList.toggle("owned-row", owned);
 
       [...tr.cells].forEach((td, i) => {
+        const deleteBtn = td.querySelector(".row-delete-btn");
+        if (deleteBtn) {
+          deleteBtn.disabled = !owned;
+          return;
+        }
+
         const dispositionSelect = td.querySelector("select.disposition-select");
 
         if (owned) {
@@ -1008,6 +1087,8 @@
 
     function applyAllRowOwnership() {
       document.querySelectorAll("#army-sheet tbody tr.editable-row").forEach(applyRowOwnership);
+      updateShowMyRowsControl();
+      applyRowFilter();
     }
 
     function createEditableRow(data = {}) {
@@ -1047,6 +1128,18 @@
 
       const rowData = { ...data };
       if (!rowData.player && getPlayerName()) rowData.player = getPlayerName();
+      const actionsTd = document.createElement("td");
+      actionsTd.className = "row-actions actions-col";
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "row-delete-btn";
+      deleteBtn.title = "Delete row";
+      deleteBtn.setAttribute("aria-label", "Delete row");
+      deleteBtn.textContent = "×";
+      deleteBtn.addEventListener("click", () => deleteEditableRow(tr));
+      actionsTd.appendChild(deleteBtn);
+      tr.appendChild(actionsTd);
+
       fillEditableRow(tr, rowData);
       attachRowEditHandlers(tr);
       applyRowOwnership(tr);
@@ -1090,6 +1183,7 @@
 
       if (rows.length === 0) {
         if (getPlayerName()) body.appendChild(createEditableRow({ player: getPlayerName() }));
+        applyRowFilter();
         return;
       }
 
@@ -1252,9 +1346,11 @@
 
       loadSheetConfig();
       loadPlayerName();
+      loadShowMyRowsFilter();
 
       document.getElementById("sheet-script-url").addEventListener("change", saveSheetConfig);
       document.getElementById("auto-refresh-sheet").addEventListener("change", updateSheetRefreshTimer);
+      document.getElementById("show-my-rows-only").addEventListener("change", onShowMyRowsChange);
       document.getElementById("player-name").addEventListener("input", onPlayerNameChange);
       document.getElementById("load-from-sheet").addEventListener("click", () => loadFromSheet({ force: true }));
       document.getElementById("save-to-sheet").addEventListener("click", () => saveToSheet({ manual: true }));
@@ -1274,27 +1370,9 @@
           return;
         }
         body.appendChild(createEditableRow({ player: name }));
+        applyRowFilter();
         markSheetDirty();
         scheduleAutoSave();
-      });
-
-      document.getElementById("copy-army-sheet").addEventListener("click", async () => {
-        const headerRow = document.querySelector("#army-sheet thead tr");
-        const editableRows = [...document.querySelectorAll("#army-sheet tbody tr.editable-row")];
-        const rows = [headerRow, ...editableRows];
-        const tsv = rows.map(row => {
-          return [...row.cells].map(cell => (cell.innerText || "").replace(/\t/g, " ").trim()).join("\t");
-        }).join("\n");
-
-        try {
-          await navigator.clipboard.writeText(tsv);
-          const btn = document.getElementById("copy-army-sheet");
-          const original = btn.textContent;
-          btn.textContent = "Copied!";
-          setTimeout(() => { btn.textContent = original; }, 1500);
-        } catch (err) {
-          alert("Copy failed — select the table cells manually and press Ctrl+C.");
-        }
       });
     }
 
